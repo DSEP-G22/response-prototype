@@ -1,0 +1,13 @@
+# Pinned to the versions this prototype was built and verified against
+# (Python 3.13). These are LangChain/LangGraph v1.x - the APIs used here
+# (StateGraph(state_schema), init_chat_model, load_mcp_tools) match v1 shapes,
+# not the older 0.x tutorials you will find online.
+langgraph==1.2.11
+langchain==1.3.16
+langchain-core==1.6.0
+langchain-anthropic==1.6.1
+langchain-openai==1.6.0
+langchain-mcp-adapters==0.3.2
+mcp==1.29.0
+langsmith==0.11.1
+python-dotenv==1.2.3
