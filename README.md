@@ -87,12 +87,41 @@ copy .env.example .env           # Windows
 # cp .env.example .env           # macOS / Linux
 ```
 
-Then edit `.env`:
+Then edit `.env`. Two providers are supported.
+
+**Gemini** — reached through its OpenAI-compatible endpoint, so `ChatOpenAI`
+drives it with nothing but a different `base_url`. There is no Google-specific
+package in `requirements.txt` for exactly this reason.
+
+> **Free-tier quota:** `gemini-3.6-flash` allows **20 requests/day**. Each query
+> costs 2 (classify + generate), so that is ~10 questions/day before HTTP 429.
+> `app.py` catches this and prints a one-line hint instead of a traceback. This
+> is why **Ollama is the shipped default.**
 
 ```ini
-LLM_PROVIDER=anthropic           # or: openai
-ANTHROPIC_API_KEY=sk-ant-...     # or OPENAI_API_KEY if you switched provider
+LLM_PROVIDER=gemini
+GOOGLE_API_KEY=AQ...
+GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
+GEMINI_MODEL=gemini-3.6-flash
+```
 
+**Ollama** (default) — runs the whole prototype without an API key and with no
+daily cap. Tags ending in `-cloud` execute on Ollama's hosted infrastructure
+(one-time `ollama signin`, nothing downloaded); drop the suffix to use a model
+you pulled yourself.
+
+```ini
+LLM_PROVIDER=ollama
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=gpt-oss:20b-cloud
+```
+
+Start the daemon first (`ollama serve`) — `app.py` checks and tells you if it
+isn't reachable.
+
+**LangSmith** (optional; add to either block):
+
+```ini
 LANGSMITH_TRACING=true
 LANGSMITH_API_KEY=lsv2_pt_...
 LANGSMITH_PROJECT=telecom-response-prototype
@@ -174,7 +203,18 @@ Worth clicking through:
   traceable to the `BACKEND DATA` block; anything else is a hallucination and is
   now visible as one.
 - **Latency per node** — the tool calls are local SQLite and near-instant, so the
-  wall time is essentially two LLM round-trips.
+  wall time is essentially two LLM round-trips. A representative traced run:
+
+  | Node | Type | Duration |
+  |---|---|---|
+  | `classify` | chain | 2,055 ms |
+  | `plan_*_tools` | chain | ~0 ms |
+  | `call_tools` | chain | 13 ms |
+  | `generate` | chain | 8,309 ms |
+  | `respond` | chain | ~0 ms |
+
+  All three MCP round-trips fit inside that 13 ms. Grounding is essentially free;
+  the model is the entire cost.
 
 ## Layout
 
@@ -206,6 +246,14 @@ response-prototype/
   routing function must return the *key* (`"connectivity"`), not the destination
   node name — returning the node name raises `KeyError` at runtime. Cost me a
   test run; see the comment in `build_graph.py`.
+- **`with_structured_output` defaults are not portable.** ChatOllama defaults to
+  `method="json_schema"`, and Ollama models routinely answer with a bare value
+  (`connectivity`) instead of the schema object, which fails as
+  `OutputParserException: Invalid json output`. Forcing
+  `method="function_calling"` fixes it — the tool-call path is far better
+  constrained. Gemini already defaults to tool-calling. That per-provider choice
+  lives in `get_structured_llm()` in `graph/llm.py` so the nodes stay
+  vendor-agnostic. This bit the prototype for real; see the commented note there.
 - **MCP tool results are content blocks**, roughly
   `[{"type": "text", "text": "<json>"}]`, not plain dicts — the protocol also
   carries images and resources. `_parse_tool_output` in `nodes.py` unwraps them.

@@ -18,7 +18,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
-from graph.llm import get_llm
+from graph.llm import get_llm, get_structured_llm
 from graph.state import SupportState
 
 # --------------------------------------------------------------------------
@@ -57,7 +57,9 @@ diagnosing the cause is a later step, not your job."""
 
 async def classify(state: SupportState) -> dict[str, Any]:
     """Route the incoming query into one of four buckets."""
-    llm = get_llm().with_structured_output(Classification)
+    # `get_structured_llm` picks the structured-output strategy that actually
+    # works for the configured provider - see the note in graph/llm.py.
+    llm = get_structured_llm(Classification)
     result: Classification = await llm.ainvoke(
         [
             SystemMessage(content=CLASSIFY_SYSTEM),
@@ -194,6 +196,9 @@ GROUNDING RULES - these override everything else:
 3. If the data shows a cause for a problem, state that cause plainly. Do not
    suggest generic troubleshooting when the backend already explains the issue.
 4. If `found` is false, tell the customer the account could not be located.
+5. When a field has a `_display` variant (e.g. `outstanding_balance_display`),
+   quote that formatted string verbatim. Never print the raw numeric field - a
+   customer should read "LKR 8,450.00", not "8450.0".
 
 STYLE: warm, direct, 2-4 sentences. Address the customer by name when known.
 Lead with the answer, then the next concrete step. No bullet lists, no preamble.
@@ -231,7 +236,8 @@ async def generate(state: SupportState) -> dict[str, Any]:
             HumanMessage(content=human),
         ]
     )
-    return {"answer": response.text().strip()}
+    # `.text` is a property in langchain-core 1.x (it was a method in 0.x).
+    return {"answer": response.text.strip()}
 
 
 # --------------------------------------------------------------------------

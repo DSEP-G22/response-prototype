@@ -45,6 +45,10 @@ class FakeResponse:
     def __init__(self, text):
         self._t = text
 
+    # A property, mirroring langchain-core 1.x AIMessage.text (it was a method
+    # in 0.x). Keeping the fake faithful to the real contract is what makes this
+    # test able to catch a regression in how nodes.generate reads the response.
+    @property
     def text(self):
         return self._t
 
@@ -63,7 +67,12 @@ class FakeLLM:
 
 
 def install_fake(request_type):
+    # Both entry points are patched: `generate` uses get_llm, while `classify`
+    # goes through get_structured_llm (which picks a per-provider strategy).
     nodes.get_llm = lambda temperature=0.0: FakeLLM(request_type)
+    nodes.get_structured_llm = (
+        lambda schema, temperature=0.0: FakeStructured(request_type)
+    )
 
 
 from langchain_mcp_adapters.client import MultiServerMCPClient  # noqa: E402

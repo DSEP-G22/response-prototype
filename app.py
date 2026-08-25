@@ -75,12 +75,32 @@ def _check_env() -> None:
     if not DB_PATH.exists():
         sys.exit(f"Mock DB not found at {DB_PATH}.\nRun:  python data/seed.py")
 
-    provider = os.getenv("LLM_PROVIDER", "anthropic").strip().lower()
-    key_var = "ANTHROPIC_API_KEY" if provider == "anthropic" else "OPENAI_API_KEY"
-    if not os.getenv(key_var):
+    provider = os.getenv("LLM_PROVIDER", "gemini").strip().lower()
+
+    if provider == "gemini":
+        # Gemini is the only provider here that needs a credential; Ollama talks
+        # to localhost.
+        if not (os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")):
+            sys.exit(
+                "LLM_PROVIDER=gemini but GOOGLE_API_KEY is not set.\n"
+                "Copy .env.example to .env and fill it in."
+            )
+    elif provider == "ollama":
+        # Fail here with a clear message rather than deep inside an httpx
+        # ConnectError once the graph is already running.
+        base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        try:
+            import urllib.request
+
+            urllib.request.urlopen(f"{base_url}/api/tags", timeout=5)
+        except Exception:
+            sys.exit(
+                f"LLM_PROVIDER=ollama but no Ollama daemon is reachable at "
+                f"{base_url}.\nStart it with:  ollama serve"
+            )
+    else:
         sys.exit(
-            f"{key_var} is not set (LLM_PROVIDER={provider}).\n"
-            "Copy .env.example to .env and fill it in."
+            f"Unsupported LLM_PROVIDER={provider!r}. Use 'gemini' or 'ollama'."
         )
 
 
@@ -133,9 +153,25 @@ async def run_queries(pairs: list[tuple[str, str, str | None]]) -> None:
         for customer_id, query, note in pairs:
             # Each `ainvoke` is one LangSmith trace: a root run named after the
             # graph, with a child run per node and a nested run per tool call.
-            final_state = await graph.ainvoke(
-                {"query": query, "customer_id": customer_id}
-            )
+            try:
+                final_state = await graph.ainvoke(
+                    {"query": query, "customer_id": customer_id}
+                )
+            except Exception as exc:  # noqa: BLE001 - CLI needs a friendly face
+                # The most common failure by far is Gemini's free-tier daily
+                # quota (20 requests/day, and each query costs 2 calls). It
+                # surfaces as a deeply nested 429 inside a LangGraph
+                # ExceptionGroup, so the raw traceback buries the one line that
+                # matters. Translate it instead of dumping 40 frames.
+                if "429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc):
+                    print(
+                        "\n[quota] The Gemini API returned 429 - the free tier "
+                        "allows 20 requests/day and each query uses 2.\n"
+                        "        Switch to Ollama (no daily cap):  "
+                        "set LLM_PROVIDER=ollama in .env"
+                    )
+                    return
+                raise
             _print_run(final_state, note)
 
 

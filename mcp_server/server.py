@@ -83,6 +83,11 @@ def get_payment_status(customer_id: str) -> dict[str, Any]:
         "customer_id": customer["customer_id"],
         "payment_status": customer["payment_status"],
         "outstanding_balance": customer["outstanding_balance"],
+        # A pre-formatted string alongside the raw number. Without it the model
+        # copies the bare float into its reply and customers read "8450.0",
+        # which looks broken. Formatting is a presentation concern the backend
+        # can settle once, rather than something each model has to get right.
+        "outstanding_balance_display": f"LKR {customer['outstanding_balance']:,.2f}",
         "renewal_date": customer["renewal_date"],
         # Pre-computing this flag keeps the causal link explicit in the payload
         # rather than asking the model to infer it from two separate fields.
